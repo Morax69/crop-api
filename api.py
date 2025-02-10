@@ -1,62 +1,55 @@
-from flask import Flask, request, jsonify, render_template
-import pickle
+from flask import Flask, request, jsonify
 import pandas as pd
+import pickle
 import numpy as np
 
 app = Flask(__name__)
 
-# Load the saved model
-with open('modelforest.pkl', 'rb') as f:
-    model = pickle.load(f)
+# Load the trained Random Forest model
+with open('modelforest2.pkl', 'rb') as f:
+    random_forest = pickle.load(f)
 
-# Load class names from dataset.csv
-df = pd.read_csv('dataset.csv')
-class_names = df['label'].unique().tolist()
-
-@app.route('/')
-def home():
-    return render_template('index.html')
+# Load the dataset to get the class names
+dataset = pd.read_csv('dataset.csv')
+class_names = dataset['label'].unique()
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    try:
-        # Get values from the request
-        features = [
-            float(request.form['rainfall']),
-            float(request.form['temp']),
-            float(request.form['weather']),
-            float(request.form['ph']),
-            float(request.form['hum'])
-        ]
-        
-        # Make prediction
-        probs = model.predict_proba([features])[0]
-        
-        # Create prediction results
-        results = [
-            {'crop': crop, 'probability': round(prob * 100, 2)}
-            for crop, prob in zip(class_names, probs)
-        ]
-        
-        # Sort by probability
-        results.sort(key=lambda x: x['probability'], reverse=True)
-        
-        # Get the recommended crop (highest probability)
-        recommended_crop = results[0]['crop']
-        
-        return jsonify({
-            'success': True,
-            'recommended_crop': recommended_crop,
-            'probability': results[0]['probability']
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
+    # Check if the request Content-Type is application/json
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    
+    # Get the input data from the request
+    data = request.get_json()
+    
+    # Check if 'features' key exists in the JSON data
+    if 'features' not in data:
+        return jsonify({"error": "Missing 'features' key in JSON data"}), 400
+    
+    # Convert the input data to a numpy array
+    features = np.array(data['features']).reshape(1, -1)
+    
+    # Predict probabilities for each class
+    rf_probs = random_forest.predict_proba(features)[0]
+    
+    # Get the predicted class
+    predicted_class = class_names[np.argmax(rf_probs)]
+    
+    # Create a dictionary of probabilities
+    probabilities = {class_name: float(prob) for class_name, prob in zip(class_names, rf_probs)}
+    
+    # Get the highest probability and its corresponding class
+    highest_prob_class = max(probabilities, key=probabilities.get)
+    highest_prob_value = probabilities[highest_prob_class]
+    
+    # Prepare the response
+    response = {
+        'recommended_crop': predicted_class,
+        'probability' : highest_prob_value * 100,
+       
+    }
+    
+    return jsonify(response)
 
 if __name__ == '__main__':
-    # Print loaded class names for verification
-    print("Loaded classes:", class_names)
     app.run(debug=True)
